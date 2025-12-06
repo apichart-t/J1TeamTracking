@@ -25,7 +25,8 @@ import {
   PieChart as PieChartIcon,
   Layers,
   LogOut,
-  TrendingUp
+  TrendingUp,
+  Filter
 } from 'lucide-react';
 import {
   BarChart,
@@ -42,14 +43,14 @@ import {
 } from 'recharts';
 
 // ==========================================
-// 🔧 CONFIGURATION (ตั้งค่า URL ใหม่ตามที่ให้มา)
+// 🔧 CONFIGURATION (ตั้งค่า URL ใหม่)
 // ==========================================
 const API_URLS = {
-  PROJECTS: "https://script.google.com/macros/s/AKfycbxn8E5-tuvCo-Irm37m1plJUenFWmPMQTN9-_5MKvZHplGiSsUxVeK6UyA1o4kp6q_TKQ/exec",
-  DEPARTMENTS: "https://script.google.com/macros/s/AKfycbx8qlRilK6iuD0PhyUdB8RmyJzjGzgBfYvBjuLCig5KZ0xTF4_1WGccz62A7ontTysGoA/exec",
-  USERS: "https://script.google.com/macros/s/AKfycbz9pkuBEOZLkQKDRni8WpRHGuEqplQnbAkCXuuviLZ4hhgynSBPS4mrKnl0TqUdUyYz/exec",
-  LOGS: "https://script.google.com/macros/s/AKfycbyJAs6y7CUhy_4esOCIZnwhZEZSJfHCniszRp3Z_vBeSg5SGVKq8lyB4uDPfGc1eVhbsg/exec",
-  GROUPS: "https://script.google.com/macros/s/AKfycbzHZx9V3wy-Lwgx6-k16sINWdICA24rxBfXPNj3UhBMWre3KB1pAssX2GotclAHSZ94/exec"
+  PROJECTS: "https://script.google.com/macros/s/AKfycbxLqLJbmFJ1VoWK-dT6rYpX9qs75bljWlqrMgUBdHGWQAjM12o89vHgRPqP0umm9NiUog/exec",
+  DEPARTMENTS: "https://script.google.com/macros/s/AKfycbwGpIfylgPCGSkqkvB40_dEbFoG5nS4tGIqVfa52I3RVXrFv8jSggrLykI89Q3iOOhS_A/exec",
+  USERS: "https://script.google.com/macros/s/AKfycbxkUJetDlLM8A1m6mgvVYX1Sw4doU9AE1CLCl6je_RJS0Mlltmo6nX5hgjMl2ju9-X4_A/exec",
+  LOGS: "https://script.google.com/macros/s/AKfycbw-0_sZFRVVOxjuUJBNcq6wxNC8Bhfbm30oceD7btv2tba4Saj36JeRXBY6ImZiB5q6/exec",
+  GROUPS: "https://script.google.com/macros/s/AKfycbyIXX0-LUz7ejkoOh2grwIeqF9vtr6bfxr2ZD1WB70xDI2rDFBkD_WvAQQHAInjkEE/exec"
 };
 
 // ==========================================
@@ -275,7 +276,7 @@ const DashboardCharts: React.FC<{ projects: Project[]; logs: Log[] }> = ({ proje
       <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800">
         <h3 className="text-white font-semibold mb-6 flex items-center gap-2">
           <BarChart2 size={18} className="text-blue-400" /> 
-          ความคืบหน้าโครงการล่าสุด (Top Progress)
+          ความคืบหน้าโครงการ (Top Progress)
         </h3>
         <div className="h-64 w-full text-xs">
           <ResponsiveContainer width="100%" height="100%">
@@ -925,7 +926,28 @@ const App: React.FC = () => {
   
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // ---- Filtering Data based on Role ----
+  // ---- Filtering State ----
+  const [dashboardFilters, setDashboardFilters] = useState({
+    dept_id: '',
+    group_id: '',
+    project_id: '',
+    startDate: '',
+    endDate: ''
+  });
+
+  const resetFilters = () => {
+    setDashboardFilters({
+      dept_id: currentUser.role === 'User' ? currentUser.dept_id : '',
+      group_id: '',
+      project_id: '',
+      startDate: '',
+      endDate: ''
+    });
+  };
+
+  // ---- Filtering Data based on Role + Dashboard Filters ----
+  
+  // 1. Base Visibility (RBAC)
   const visibleProjects = useMemo(() => {
     if (currentUser.role === 'Admin' || currentUser.role === 'Viewer') {
         return projects;
@@ -933,10 +955,58 @@ const App: React.FC = () => {
     return projects.filter(p => p.dept_id === currentUser.dept_id); 
   }, [projects, currentUser]);
 
-  const visibleLogs = useMemo(() => {
-     const visibleProjectIds = new Set(visibleProjects.map(p => String(p.project_id)));
-     return logs.filter(l => visibleProjectIds.has(String(l.project_id)));
-  }, [logs, visibleProjects]);
+  // 2. Applied Filters on Projects
+  const filteredProjects = useMemo(() => {
+    return visibleProjects.filter(p => {
+      // Filter by Department
+      if (dashboardFilters.dept_id && String(p.dept_id) !== String(dashboardFilters.dept_id)) return false;
+      // Filter by Group
+      if (dashboardFilters.group_id && String(p.group_id) !== String(dashboardFilters.group_id)) return false;
+      // Filter by specific Project
+      if (dashboardFilters.project_id && String(p.project_id) !== String(dashboardFilters.project_id)) return false;
+      
+      return true;
+    });
+  }, [visibleProjects, dashboardFilters]);
+
+  // 3. Filter Logs based on Filtered Projects + Date Range
+  const filteredLogs = useMemo(() => {
+     // Get IDs of visible projects
+     const allowedProjectIds = new Set(filteredProjects.map(p => String(p.project_id)));
+     
+     return logs.filter(l => {
+       // Must belong to a filtered project
+       if (!allowedProjectIds.has(String(l.project_id))) return false;
+       
+       // Filter by Period Start
+       if (dashboardFilters.startDate && new Date(l.period_start) < new Date(dashboardFilters.startDate)) return false;
+       // Filter by Period End
+       if (dashboardFilters.endDate && new Date(l.period_end) > new Date(dashboardFilters.endDate)) return false;
+
+       return true;
+     });
+  }, [logs, filteredProjects, dashboardFilters]);
+
+
+  // ---- Cascading Dropdown Options ----
+  const availableGroups = useMemo(() => {
+    if (dashboardFilters.dept_id) {
+      return groups.filter(g => String(g.dept_id) === String(dashboardFilters.dept_id));
+    }
+    return groups;
+  }, [groups, dashboardFilters.dept_id]);
+
+  const availableProjects = useMemo(() => {
+    let projs = visibleProjects;
+    if (dashboardFilters.dept_id) {
+      projs = projs.filter(p => String(p.dept_id) === String(dashboardFilters.dept_id));
+    }
+    if (dashboardFilters.group_id) {
+      projs = projs.filter(p => String(p.group_id) === String(dashboardFilters.group_id));
+    }
+    return projs;
+  }, [visibleProjects, dashboardFilters.dept_id, dashboardFilters.group_id]);
+
 
   // ---- Fetch Data ----
   const fetchData = async () => {
@@ -987,13 +1057,23 @@ const App: React.FC = () => {
      fetchData();
   }, []);
 
+  // Sync selected project ID with filtered list
   useEffect(() => {
-      if (!selectedProjectId && visibleProjects.length > 0) {
-          setSelectedProjectId(visibleProjects[0].project_id);
-      } else if (selectedProjectId && !visibleProjects.find(p => String(p.project_id) === String(selectedProjectId))) {
-          setSelectedProjectId(visibleProjects.length > 0 ? visibleProjects[0].project_id : null);
+      if (!selectedProjectId && filteredProjects.length > 0) {
+          setSelectedProjectId(filteredProjects[0].project_id);
+      } else if (selectedProjectId && !filteredProjects.find(p => String(p.project_id) === String(selectedProjectId))) {
+          setSelectedProjectId(filteredProjects.length > 0 ? filteredProjects[0].project_id : null);
       }
-  }, [visibleProjects, selectedProjectId]);
+  }, [filteredProjects, selectedProjectId]);
+  
+  // Set default filters when user changes
+  useEffect(() => {
+    if (currentUser.role === 'User') {
+      setDashboardFilters(prev => ({ ...prev, dept_id: currentUser.dept_id }));
+    } else {
+       // Reset or keep empty for Admin/Viewer
+    }
+  }, [currentUser]);
 
 
   // ---- Role Switcher ----
@@ -1128,13 +1208,13 @@ const App: React.FC = () => {
     return { text: 'text-gray-400', bg: 'bg-gray-500/10', border: 'border-gray-500/30', icon: <Activity size={16} /> };
   };
 
-  const selectedProjectData = visibleProjects?.find(p => String(p.project_id) === String(selectedProjectId));
-  const selectedProjectLogs = (visibleLogs || [])
+  const selectedProjectData = filteredProjects?.find(p => String(p.project_id) === String(selectedProjectId));
+  const selectedProjectLogs = (filteredLogs || [])
     .filter(l => String(l.project_id) === String(selectedProjectId))
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   
-  const totalProjects = visibleProjects?.length || 0;
-  const activeProjects = (visibleProjects || []).filter(p => {
+  const totalProjects = filteredProjects?.length || 0;
+  const activeProjects = (filteredProjects || []).filter(p => {
       const s = String(p.project_status).toLowerCase(); // Updated key
       return s.includes('active') || s.includes('กำลังดำเนินการ');
   }).length;
@@ -1285,7 +1365,7 @@ const App: React.FC = () => {
             {/* ---------------- VIEW 1: DASHBOARD ---------------- */}
             {activeTab === 'dashboard' && (
                 <div className="p-6 lg:p-10 max-w-7xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <header className="mb-8">
+                    <header className="mb-6">
                         <div className="flex justify-between items-start">
                             <div>
                                 <h1 className="text-3xl font-bold text-white mb-2">Dashboard Overview</h1>
@@ -1297,11 +1377,92 @@ const App: React.FC = () => {
                             </div>
                         </div>
                     </header>
+                    
+                    {/* --- FILTER BAR --- */}
+                    <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl mb-8 shadow-sm">
+                      <div className="flex items-center gap-2 mb-3 text-slate-400 text-sm font-medium">
+                        <Filter size={16} /> ตัวกรองข้อมูล (Filters)
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                         
+                         {/* Dept Filter */}
+                         <div>
+                            <select 
+                              className="w-full bg-slate-800 border border-slate-700 text-slate-300 text-sm rounded-lg p-2.5 outline-none focus:ring-1 focus:ring-blue-500"
+                              value={dashboardFilters.dept_id}
+                              onChange={(e) => setDashboardFilters(prev => ({...prev, dept_id: e.target.value, group_id: '', project_id: ''}))}
+                              disabled={currentUser.role === 'User'}
+                            >
+                              <option value="">ทั้งหมด (All Departments)</option>
+                              {departments.map(d => (
+                                <option key={d.dept_id} value={d.dept_id}>{d.dept_name}</option>
+                              ))}
+                            </select>
+                         </div>
+
+                         {/* Group Filter */}
+                         <div>
+                            <select 
+                              className="w-full bg-slate-800 border border-slate-700 text-slate-300 text-sm rounded-lg p-2.5 outline-none focus:ring-1 focus:ring-blue-500"
+                              value={dashboardFilters.group_id}
+                              onChange={(e) => setDashboardFilters(prev => ({...prev, group_id: e.target.value, project_id: ''}))}
+                            >
+                              <option value="">ทุกกลุ่มงาน (All Groups)</option>
+                              {availableGroups.map(g => (
+                                <option key={g.group_id} value={g.group_id}>{g.group_name}</option>
+                              ))}
+                            </select>
+                         </div>
+
+                         {/* Project Filter */}
+                         <div>
+                            <select 
+                              className="w-full bg-slate-800 border border-slate-700 text-slate-300 text-sm rounded-lg p-2.5 outline-none focus:ring-1 focus:ring-blue-500"
+                              value={dashboardFilters.project_id}
+                              onChange={(e) => setDashboardFilters(prev => ({...prev, project_id: e.target.value}))}
+                            >
+                              <option value="">ทุกแผนงาน (All Plans)</option>
+                              {availableProjects.map(p => (
+                                <option key={p.project_id} value={p.project_id}>{p.project_name}</option>
+                              ))}
+                            </select>
+                         </div>
+
+                         {/* Date Start */}
+                         <div>
+                            <input 
+                               type="date"
+                               className="w-full bg-slate-800 border border-slate-700 text-slate-300 text-sm rounded-lg p-2.5 outline-none focus:ring-1 focus:ring-blue-500"
+                               value={dashboardFilters.startDate}
+                               onChange={(e) => setDashboardFilters(prev => ({...prev, startDate: e.target.value}))}
+                               placeholder="Start Date"
+                            />
+                         </div>
+
+                         {/* Date End */}
+                         <div className="flex gap-2">
+                             <input 
+                                type="date"
+                                className="w-full bg-slate-800 border border-slate-700 text-slate-300 text-sm rounded-lg p-2.5 outline-none focus:ring-1 focus:ring-blue-500"
+                                value={dashboardFilters.endDate}
+                                onChange={(e) => setDashboardFilters(prev => ({...prev, endDate: e.target.value}))}
+                             />
+                             <button 
+                               onClick={resetFilters}
+                               className="bg-slate-700 hover:bg-slate-600 text-slate-300 p-2.5 rounded-lg transition-colors"
+                               title="Reset Filters"
+                             >
+                               <RefreshCw size={18} />
+                             </button>
+                         </div>
+
+                      </div>
+                    </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                         <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 flex items-center gap-4">
                             <div className="p-4 rounded-2xl bg-indigo-500/10 text-indigo-400"><FolderKanban size={28}/></div>
-                            <div><p className="text-slate-400 text-sm font-medium">Total Projects</p><p className="text-3xl font-bold text-white mt-1">{totalProjects}</p></div>
+                            <div><p className="text-slate-400 text-sm font-medium">Filtered Projects</p><p className="text-3xl font-bold text-white mt-1">{totalProjects}</p></div>
                         </div>
                         <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 flex items-center gap-4">
                             <div className="p-4 rounded-2xl bg-green-500/10 text-green-400"><Activity size={28}/></div>
@@ -1310,23 +1471,23 @@ const App: React.FC = () => {
                         <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 flex items-center gap-4">
                             <div className="p-4 rounded-2xl bg-orange-500/10 text-orange-400"><Coins size={28}/></div>
                             <div><p className="text-slate-400 text-sm font-medium">Total Budget</p><p className="text-3xl font-bold text-white mt-1">
-                                {(visibleProjects.reduce((acc, p) => acc + (Number(p.budget) || 0), 0)).toLocaleString()}
+                                {(filteredProjects.reduce((acc, p) => acc + (Number(p.budget) || 0), 0)).toLocaleString()}
                             </p></div>
                         </div>
                     </div>
 
-                    <DashboardCharts projects={visibleProjects} logs={visibleLogs} />
+                    <DashboardCharts projects={filteredProjects} logs={filteredLogs} />
 
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                         <div className="lg:col-span-4 flex flex-col gap-4">
                             <div className="flex items-center justify-between mb-2">
                                 <h2 className="text-lg font-semibold text-white flex items-center gap-2"><FolderKanban size={18}/> Projects List</h2>
                             </div>
-                            {visibleProjects.length === 0 ? (
-                                <div className="p-8 text-center border border-slate-800 rounded-xl bg-slate-900 text-slate-500 text-sm">No projects found.</div>
+                            {filteredProjects.length === 0 ? (
+                                <div className="p-8 text-center border border-slate-800 rounded-xl bg-slate-900 text-slate-500 text-sm">No projects found matching filters.</div>
                             ) : (
                                 <div className="space-y-3">
-                                {(visibleProjects || []).map(proj => {
+                                {(filteredProjects || []).map(proj => {
                                     const statusStyle = getStatusStyle(proj.project_status);
                                     const isSelected = String(proj.project_id) === String(selectedProjectId);
                                     return (
@@ -1387,7 +1548,7 @@ const App: React.FC = () => {
                                     <div className="relative space-y-8 pl-6 before:absolute before:inset-0 before:left-2 before:w-0.5 before:bg-slate-800">
                                         {selectedProjectLogs.length === 0 ? (
                                             <div className="text-center py-10 text-slate-500 bg-slate-950/30 rounded-xl border border-slate-800/50 border-dashed">
-                                                <p>No activity logs yet.</p>
+                                                <p>No activity logs found in this period.</p>
                                             </div>
                                         ) : (
                                         selectedProjectLogs.slice(0, 3).map((log, index) => ( // Show only top 3
